@@ -18,7 +18,7 @@ def noise_input(x, eps=1e-3):
 
     masked_indices = torch.rand((b, l), device=x.device) < p_mask
     # Use the mask token ID from the multilingual tokenizer
-    mask_token_id = 103  # [MASK] token ID for multilingual tokenizer
+    mask_token_id = 250001  # [MASK] token ID for multilingual tokenizer
     noisy_batch = torch.where(masked_indices, mask_token_id, x)
     return noisy_batch, masked_indices, p_mask
 
@@ -125,7 +125,7 @@ def get_num_transfer_tokens(mask_index, steps):
 
 @ torch.no_grad()
 def generate(model, prompt, steps=128, gen_length=128, block_length=128, temperature=0.,
-             cfg_scale=0., remasking='low_confidence', mask_id=103):
+             cfg_scale=0., remasking='low_confidence', mask_id=250001):
     '''
     Args:
         model: Mask predictor.
@@ -136,7 +136,7 @@ def generate(model, prompt, steps=128, gen_length=128, block_length=128, tempera
         temperature: Categorical distribution sampling temperature.
         cfg_scale: Unsupervised classifier-free guidance scale.
         remasking: Remasking strategy. 'low_confidence' or 'random'.
-        mask_id: The token id of [MASK] is 103 for multilingual tokenizer.
+        mask_id: The token id of [MASK] is 250001 for multilingual tokenizer.
     '''
     x = torch.full((1, prompt.shape[1] + gen_length), mask_id, dtype=torch.long).to(prompt.device)
     x[:, :prompt.shape[1]] = prompt.clone()
