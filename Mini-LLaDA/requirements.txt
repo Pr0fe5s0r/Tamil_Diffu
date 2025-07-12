@@ -1,0 +1,8 @@
+numpy==1.23.5
+pytest==7.4.0
+Requests==2.31.0
+torch==2.0.1
+tqdm==4.64.1
+matplotlib==3.9
+transformers==4.35.0
+datasets==2.14.0
