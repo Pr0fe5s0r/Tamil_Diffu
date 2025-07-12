@@ -307,7 +307,7 @@ if __name__ == '__main__':
             
             # Generate sample text
             try:
-                prompt = "All:\nWhy are"
+                prompt = "காற்று"
                 tokenized_prompt = tokenizer.encode(prompt, add_special_tokens=False)
                 # Truncate prompt if it's too long for the reduced sequence length
                 if len(tokenized_prompt) > BLOCK_SIZE // 2:
