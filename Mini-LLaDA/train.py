@@ -215,7 +215,7 @@ if __name__ == '__main__':
         n_heads=8,
         vocab_size=250048,  # Updated for multilingual tokenizer
         multiple_of=256,
-        max_seq_len=2048,
+        max_seq_len=128,
         dropout=0.1
     )
     
@@ -271,7 +271,7 @@ if __name__ == '__main__':
         scheduler.step()  # Step the scheduler
         train_losses.append(loss.item())
         
-        if step % 10 == 0:
+        if step % 70 == 0:
             current_lr = scheduler.get_last_lr()[0]
             print(f"step {step} loss {loss.item():.3f} lr {current_lr:.2e}")
         
