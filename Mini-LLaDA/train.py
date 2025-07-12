@@ -37,6 +37,31 @@ def load_memmap(split):
             pass  # Ignore if not supported on the OS
     return _memmap_cache[split]
 
+def calculate_perplexity(model, data_loader, device):
+    """Calculate perplexity on a dataset."""
+    model.eval()
+    total_loss = 0
+    total_tokens = 0
+    
+    with torch.no_grad():
+        for X, Y, masked_indices, p_mask in data_loader:
+            X, Y = X.to(device), Y.to(device)
+            masked_indices = masked_indices.to(device)
+            p_mask = p_mask.to(device)
+            
+            logits = model(X, targets=(Y, masked_indices, p_mask))
+            loss = model.last_loss
+            
+            # Count masked tokens for normalization
+            num_masked = masked_indices.sum().item()
+            total_loss += loss.item() * num_masked
+            total_tokens += num_masked
+    
+    avg_loss = total_loss / total_tokens if total_tokens > 0 else float('inf')
+    perplexity = torch.exp(torch.tensor(avg_loss))
+    return perplexity.item()
+
+
 def get_batch(split, batch_size, block_size, device):
     # We recreate np.memmap every batch to avoid a memory leak, as per
     # https://stackoverflow.com/questions/45132940/numpy-memmap-memory-usage-want-to-iterate-once/61472122#61472122
@@ -168,7 +193,7 @@ def generate(model, prompt, steps=128, gen_length=128, block_length=128, tempera
 import argparse
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Train Tiny-LLaDiff on a specified dataset.")
-    parser.add_argument('--dataset', choices=['shakespeare', 'enwik8'], default='shakespeare', 
+    parser.add_argument('--dataset', choices=['shakespeare', 'enwik8', 'tamil'], default='shakespeare', 
                         help="Dataset to use for training. Options: 'shakespeare', 'enwik8'. Default: 'shakespeare'.")
     
     args = parser.parse_args()
@@ -205,9 +230,24 @@ if __name__ == '__main__':
     # model.load_state_dict(checkpoint["state_dict"])
     optimizer = torch.optim.AdamW(model.parameters(), lr=4e-4, betas=(0.9, 0.95), weight_decay=0.1)
     # optimizer.load_state_dict(checkpoint["optimizer"])
+    
+    # Add learning rate scheduler
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=NUM_STEPS, eta_min=1e-6)
+    
     scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
     ctx = nullcontext() if device == 'cpu' else torch.amp.autocast(device_type=device, dtype=ptdtype)
     tokenizer = AutoTokenizer.from_pretrained("Alibaba-NLP/gte-multilingual-base")
+    
+    # Validate data loading
+    print("Validating data loading...")
+    try:
+        X_test, Y_test, masked_indices, p_mask = get_batch('train', 2, BLOCK_SIZE, device)
+        print(f"Data shapes - X: {X_test.shape}, Y: {Y_test.shape}")
+        print(f"Masked tokens: {masked_indices.sum().item()}")
+        print("Data loading validation successful!")
+    except Exception as e:
+        print(f"Data loading failed: {e}")
+        raise
     
     train_losses, val_losses = [], []
     best_val_loss = float('inf')
@@ -221,13 +261,19 @@ if __name__ == '__main__':
             loss = model.last_loss
             scaler.scale(loss).backward()
         
+        # Clip gradients
+        scaler.unscale_(optimizer)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        
         scaler.step(optimizer)
         scaler.update()
         optimizer.zero_grad(set_to_none=True)
+        scheduler.step()  # Step the scheduler
         train_losses.append(loss.item())
         
         if step % 10 == 0:
-            print(f"step {step} loss {loss.item():.3f}")
+            current_lr = scheduler.get_last_lr()[0]
+            print(f"step {step} loss {loss.item():.3f} lr {current_lr:.2e}")
         
         if step % 1000 == 0:
             model.eval()
@@ -246,21 +292,38 @@ if __name__ == '__main__':
                 torch.save({
                     "state_dict": model.state_dict(),
                     "optimizer": optimizer.state_dict(),
-                    "model_args": args
+                    "scheduler": scheduler.state_dict(),
+                    "model_args": args,
+                    "step": step,
+                    "best_val_loss": best_val_loss
                 }, os.path.join(checkpoint_dir, f"model_{step}.pth"))
                 print("*"*50)
                 print(f"Checkpoint saved at step {step} with validation loss {avg_val_loss:.3f}")
                 print("*"*50)
 
-            prompt = "All:\nWhy are"
-            tokenized_prompt = tokenizer.encode(prompt, add_special_tokens=False)
-            tokenized_prompt = torch.tensor(tokenized_prompt, dtype=torch.long).to(device)
-            output = generate(model, tokenized_prompt.unsqueeze(0), temperature=0.7)
-            res = tokenizer.decode(output.cpu().tolist())
-            print("Generated text:")
-            print(res[0])
+            # Calculate perplexity
+            val_perplexity = torch.exp(torch.tensor(avg_val_loss)).item()
+            print(f"Validation perplexity: {val_perplexity:.2f}")
+            
+            # Generate sample text
+            try:
+                prompt = "All:\nWhy are"
+                tokenized_prompt = tokenizer.encode(prompt, add_special_tokens=False)
+                tokenized_prompt = torch.tensor(tokenized_prompt, dtype=torch.long).to(device)
+                output = generate(model, tokenized_prompt.unsqueeze(0), temperature=0.7)
+                # The generate function returns a tensor, we need to get the first sequence
+                generated_tokens = output[0] if output.dim() > 1 else output
+                res = tokenizer.decode(generated_tokens.cpu().tolist())
+                print("Generated text:")
+                print(res)
+            except Exception as e:
+                print(f"Generation failed: {e}")
+                import traceback
+                traceback.print_exc()
+            
             print(f"Mean validation loss: {avg_val_loss:.3f}")
             
+            # Plot training curves
             plt.figure(figsize=(10,5))
             plt.loglog(train_losses, label='Train Loss', alpha=0.7)
             plt.loglog(range(0, len(val_losses) * 1000, 1000), val_losses, label='Validation Loss', marker='o', linestyle='dashed')

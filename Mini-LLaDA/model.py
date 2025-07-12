@@ -261,10 +261,13 @@ class Transformer(nn.Module):
 
         if targets is not None:
             Y, masked_indices, p_mask = targets
-            # if we are given some desired targets also calculate the loss
-            # self.last_loss = F.cross_entropy(logits.view(-1, logits.size(-1)), Y.view(-1), ignore_index=-1)
-            token_loss = F.cross_entropy(logits[masked_indices], Y[masked_indices], reduction='none') / p_mask[masked_indices]
-            loss = token_loss.sum() / (Y.shape[0] * Y.shape[1])
+            # Calculate loss only on masked positions
+            # For masked diffusion, we want to predict the original tokens at masked positions
+            masked_logits = logits[masked_indices]  # Shape: (num_masked_tokens, vocab_size)
+            masked_targets = Y[masked_indices]      # Shape: (num_masked_tokens,)
+            
+            # Calculate cross-entropy loss on masked positions
+            loss = F.cross_entropy(masked_logits, masked_targets, reduction='mean')
             self.last_loss = loss
         else:
             self.last_loss = None
