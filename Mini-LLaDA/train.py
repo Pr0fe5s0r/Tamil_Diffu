@@ -201,8 +201,8 @@ if __name__ == '__main__':
     cwd = os.path.dirname(__file__)
     dataset = args.dataset
     data_dir = os.path.join(cwd, 'data', dataset)
-    BLOCK_SIZE = 256
-    BATCH_SIZE = 16
+    BLOCK_SIZE = 64  # Reduced from 256 to 64 for memory efficiency and faster training
+    BATCH_SIZE = 32  # Increased from 16 to 32 since we reduced sequence length
     NUM_STEPS = 100_000
     VAL_STEPS = 50
     device =  'cuda' if torch.cuda.is_available() else 'cpu'
@@ -215,7 +215,7 @@ if __name__ == '__main__':
         n_heads=8,
         vocab_size=250048,  # Updated for multilingual tokenizer
         multiple_of=256,
-        max_seq_len=128,
+        max_seq_len=64,  # Reduced from 2048 to 64 for memory efficiency and faster training
         dropout=0.1
     )
     
@@ -309,8 +309,12 @@ if __name__ == '__main__':
             try:
                 prompt = "All:\nWhy are"
                 tokenized_prompt = tokenizer.encode(prompt, add_special_tokens=False)
+                # Truncate prompt if it's too long for the reduced sequence length
+                if len(tokenized_prompt) > BLOCK_SIZE // 2:
+                    tokenized_prompt = tokenized_prompt[:BLOCK_SIZE // 2]
                 tokenized_prompt = torch.tensor(tokenized_prompt, dtype=torch.long).to(device)
-                output = generate(model, tokenized_prompt.unsqueeze(0), temperature=0.7)
+                output = generate(model, tokenized_prompt.unsqueeze(0), 
+                               steps=32, gen_length=32, block_length=16, temperature=0.7)
                 # The generate function returns a tensor, we need to get the first sequence
                 generated_tokens = output[0] if output.dim() > 1 else output
                 res = tokenizer.decode(generated_tokens.cpu().tolist())
